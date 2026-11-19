@@ -1,0 +1,29 @@
+﻿# Build output
+target/
+
+# Secrets and local configuration - never commit
+.env
+.env.*
+*.pem
+*.key
+*.p12
+*.jks
+application-local.yml
+application-local.properties
+
+# IDE
+.idea/
+*.iml
+.vscode/
+.classpath
+.project
+.settings/
+.factorypath
+
+# OS / logs
+.DS_Store
+Thumbs.db
+*.log
+
+# Bob scratch
+.bob/tmp/

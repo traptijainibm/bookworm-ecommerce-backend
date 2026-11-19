@@ -1,0 +1,11 @@
+spring:
+  flyway:
+    # Both locations are required: db/migration holds the schema, db/seed holds development-only sample data.
+    # Only the dev profile loads db/seed; default, test and prod never do.
+    locations: classpath:db/migration,classpath:db/seed
+
+springdoc:
+  api-docs:
+    enabled: true
+  swagger-ui:
+    enabled: true

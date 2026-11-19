@@ -1,0 +1,45 @@
+# AGENTS.md
+
+This file provides guidance to agents when working with code in this repository.
+
+## Stack
+Java 21, Spring Boot **4.1.2** (Spring Framework 7, Security 7, Hibernate 7, JUnit 6, Jackson 3), PostgreSQL 18, Maven, springdoc 3.2.0 (its parent is Boot 4.1.2). Design and phase plan were agreed in chat; implementation proceeds one phase at a time, each reviewed by the user before the next starts.
+
+## Commands (Windows / PowerShell)
+- `java` and `mvn` are on `PATH` and `JAVA_HOME` points at JDK 21. The build needs Java 21 (JDK 25 may also be installed); if `java -version` does not report 21, point `JAVA_HOME` at a JDK 21 before running Maven.
+- Unit tests only (no DB needed): `mvn -B -ntp test`
+- **Single test class**: `mvn -B -ntp '-Dtest=GlobalExceptionHandlerTest' test`; single method: `'-Dtest=Class#method'`. **Quote every `-D...=...`** or PowerShell splits it and Maven fails with "Unknown lifecycle phase".
+- Full build incl. integration tests: `mvn -B -ntp verify`
+- Single integration test: `mvn -B -ntp '-Dit.test=BookwormApplicationIT' verify`. `*IT` classes run only under Failsafe (`verify`), never under `test`.
+- Run the app: `mvn spring-boot:run '-Dspring-boot.run.profiles=dev'` (dev profile enables Swagger UI at `/swagger-ui.html` and loads the dev seed). Starting it applies pending Flyway migrations to `bookworm_db`. Only start it when the current phase's migrations are approved.
+- Packaged jar (what was used to verify Phase 1): `mvn -B -ntp -DskipTests package`, then `Start-Process java -ArgumentList '-jar','target\bookworm-ecommerce-backend-0.0.1-SNAPSHOT.jar','--spring.profiles.active=dev'`. Background launches through the tool can exit silently; use `Start-Process` with redirected output and stop it afterwards.
+
+## Database / secrets
+- App needs `BOOKWORM_DB_USER` and `BOOKWORM_DB_PASSWORD` (deliberately no defaults; startup fails without them). Optional: `BOOKWORM_DB_URL` (default `jdbc:postgresql://127.0.0.1:5432/bookworm_db`), `BOOKWORM_TEST_DB_URL` (default database `bookworm_test`).
+- Integration tests use the real PostgreSQL `bookworm_test` DB (no H2, no Docker/Testcontainers on this machine). Never run them against `bookworm_db`.
+- Local PostgreSQL 18 is started manually (no Windows service); `pg_hba` uses `scram-sha-256` so a password is always required.
+- Database state (verified after Phase 1): `bookworm_db` and `bookworm_test` both exist and resolve by name. Flyway is at V2 in both. `bookworm_db` also holds the dev seed (31 books incl. 1 inactive, 24 authors, 6 categories) and the `pg_trgm` extension; `bookworm_test` has the schema only and 0 rows (integration tests roll back). NEVER create, rename, drop or alter a database or role without the user's explicit approval; only the app's own Flyway migrations may change schema, and only in the phases the user has approved.
+- The app currently connects as the `postgres` superuser. This is acceptable only for local development. Before any shared deployment create a least-privilege application role (not done; needs the user's approval).
+- Integration tests (`*IT`) insert fixtures with JDBC inside a `@Transactional` test so everything rolls back. Use unusual fixture names/ISBNs (`978999...`, `It ...`) so they cannot clash with seed data, and never commit fixtures.
+- Never put credentials in files, chat or commits. `.gitignore` is protected from the file-write tool; edit it via shell.
+
+## Non-obvious Boot 4 facts
+- Starters/test packages were renamed: use `spring-boot-starter-webmvc` (not `-web`), `spring-boot-starter-flyway` plus `flyway-database-postgresql`, and test imports `org.springframework.boot.webmvc.test.autoconfigure.{WebMvcTest,AutoConfigureMockMvc}`.
+- JWT: use Spring Security's Nimbus resource-server support, not `jjwt` (jjwt targets Jackson 2; Boot 4 uses Jackson 3).
+- pom.xml wires the Mockito jar as a `-javaagent` for Surefire/Failsafe to avoid the JDK self-attach warning; keep it when editing plugins.
+
+## Conventions in this repo
+- Package-by-feature under `com.bookworm` (`common`, later `auth`, `user`, `catalogue`, `cart`, `wishlist`, `order`, `payment`, `loyalty`). Controllers -> services -> repositories; features talk through services only. Entities never leave the service layer; use record DTOs and hand-written mappers (no Lombok/MapStruct).
+- Errors: throw `ApiException(ErrorCode, message)`; `GlobalExceptionHandler` (`common/error`) emits RFC 9457 `ProblemDetail` with stable `code` and `traceId`. Add new codes to `ErrorCode`. Messages in `ApiException` go to clients: never include internals.
+- `TraceIdFilter` generates the trace id server-side (client-supplied ids are ignored on purpose).
+- Schema only via Flyway (`db/migration`, `ddl-auto=validate`). Dev seed is `db/seed/R__seed_catalogue.sql`: insert-only with `ON CONFLICT DO NOTHING`, never UPDATE/DELETE, loaded only by `application-dev.yml` (which must list BOTH `db/migration` and `db/seed`). Seed ISBNs are synthetic (`978000000NNNC`). Changing the seed file's content makes Flyway re-run it, so keep it idempotent.
+- Catalogue entities (`Book`, `Author`, `Category`) are `@Immutable` read-only mappings in Phase 1. Search uses `LikePatterns.containsIgnoreCase` (escapes `%`, `_`, `\`) against `lower(col)` to hit the trigram indexes; empty-string (not null) means "no filter" in `BookRepository.search` because PostgreSQL cannot infer the type of a null parameter.
+- Public responses expose `inStock` only, never `stockQuantity`, `active` or `version`. Inactive books return 404 / are excluded everywhere.
+- Mockito: stub a mock's return value from other mocks only after building those mocks (nested `when(...)` inside `thenReturn(...)` raises `UnfinishedStubbingException`).
+- Money is `BigDecimal` / `NUMERIC(12,2)`, INR, `HALF_UP`. Server binds to `127.0.0.1`. Swagger/api-docs are off by default and enabled only by the `dev`/`test` profiles.
+
+## Security rules that apply to all code here
+- Secrets via environment only; never bind to `0.0.0.0`; parameterized queries; validate all input server-side; generic client errors, details logged server-side; never log passwords/tokens/PII/payment data.
+- Passwords: BCrypt. Container images (if added): `registry.redhat.io` minimal UBI, non-root.
+- Auth design (chosen by the user): self-contained Spring Security + JWT + BCrypt, no Keycloak/IdP. This deviates from the global SAML/OIDC rule and is NOT an approved exception; do not describe it as approved. Limitations are listed in `docs/DESIGN.md` section 7. Do not add an external IdP.
+- Design (entities, checkout/stock/idempotency, loyalty maths, API, phase plan) is in `docs/DESIGN.md`; follow it and stop for user review after each phase. Phase 1 is read-only catalogue (GET endpoints, search, filter, details, related books, dev seed) only: no admin writes, no checkout, no stock changes, no auth.

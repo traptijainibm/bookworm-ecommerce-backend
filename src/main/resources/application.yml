@@ -1,0 +1,52 @@
+spring:
+  application:
+    name: bookworm
+  datasource:
+    # Credentials come from the environment only. There are deliberately no defaults for
+    # user/password: startup fails fast when they are missing.
+    url: ${BOOKWORM_DB_URL:jdbc:postgresql://127.0.0.1:5432/bookworm_db}
+    username: ${BOOKWORM_DB_USER}
+    password: ${BOOKWORM_DB_PASSWORD}
+    hikari:
+      connection-timeout: 5000
+      maximum-pool-size: 10
+  jpa:
+    open-in-view: false
+    hibernate:
+      ddl-auto: validate
+    properties:
+      hibernate:
+        jdbc:
+          time_zone: UTC
+  flyway:
+    enabled: true
+
+server:
+  address: 127.0.0.1
+  port: 8080
+  shutdown: graceful
+  error:
+    include-message: never
+    include-binding-errors: never
+    include-stacktrace: never
+    include-exception: false
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+  endpoint:
+    health:
+      show-details: never
+
+# API docs are off unless a profile (dev/test) turns them on.
+springdoc:
+  api-docs:
+    enabled: false
+  swagger-ui:
+    enabled: false
+
+logging:
+  pattern:
+    level: "%5p [%X{traceId:-}]"

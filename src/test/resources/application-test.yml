@@ -1,0 +1,10 @@
+spring:
+  datasource:
+    # Dedicated database so tests never touch dev data. Credentials are shared with dev via env vars.
+    url: ${BOOKWORM_TEST_DB_URL:jdbc:postgresql://127.0.0.1:5432/bookworm_test}
+
+springdoc:
+  api-docs:
+    enabled: true
+  swagger-ui:
+    enabled: true
