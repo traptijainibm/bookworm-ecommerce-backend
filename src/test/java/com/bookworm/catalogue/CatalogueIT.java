@@ -9,6 +9,7 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
+import com.bookworm.testsupport.TestJwtSecretInitializer;
 import java.math.BigDecimal;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -17,6 +18,7 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.ActiveProfiles;
+import org.springframework.test.context.ContextConfiguration;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -28,6 +30,7 @@ import org.springframework.transaction.annotation.Transactional;
 @SpringBootTest
 @AutoConfigureMockMvc
 @ActiveProfiles("test")
+@ContextConfiguration(initializers = TestJwtSecretInitializer.class)
 @Transactional
 class CatalogueIT {
 
@@ -234,18 +237,27 @@ class CatalogueIT {
     // ---- API surface -----------------------------------------------------------------------------
 
     @Test
-    void openApiDocumentContainsOnlyGetOperations() throws Exception {
+    void catalogueEndpointsInTheOpenApiDocumentAreGetOnlyAndNoAdminApiExistsYet() throws Exception {
+        // Phase 2 adds the auth and /me endpoints (POST/PUT), so the invariant is now: the CATALOGUE is read-only
+        // and no admin (write) API has been published yet (that is Phase 3).
+        for (String path : java.util.List.of("/api/v1/books", "/api/v1/books/{id}", "/api/v1/books/{id}/related",
+                "/api/v1/categories")) {
+            mockMvc.perform(get("/v3/api-docs"))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.paths['" + path + "'].get").exists())
+                    .andExpect(jsonPath("$.paths['" + path + "'].post").doesNotExist())
+                    .andExpect(jsonPath("$.paths['" + path + "'].put").doesNotExist())
+                    .andExpect(jsonPath("$.paths['" + path + "'].patch").doesNotExist())
+                    .andExpect(jsonPath("$.paths['" + path + "'].delete").doesNotExist());
+        }
         mockMvc.perform(get("/v3/api-docs"))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.paths['/api/v1/books'].get").exists())
-                .andExpect(jsonPath("$.paths['/api/v1/books/{id}'].get").exists())
-                .andExpect(jsonPath("$.paths['/api/v1/books/{id}/related'].get").exists())
-                .andExpect(jsonPath("$.paths['/api/v1/categories'].get").exists())
-                .andExpect(jsonPath("$.paths.*.post").doesNotExist())
-                .andExpect(jsonPath("$.paths.*.put").doesNotExist())
-                .andExpect(jsonPath("$.paths.*.patch").doesNotExist())
-                .andExpect(jsonPath("$.paths.*.delete").doesNotExist())
-                .andExpect(jsonPath("$.paths", org.hamcrest.Matchers.aMapWithSize(4)));
+                .andExpect(jsonPath("$.paths['/api/v1/admin/probe']").doesNotExist())
+                .andExpect(jsonPath("$.paths", org.hamcrest.Matchers.aMapWithSize(8)))
+                .andExpect(jsonPath("$.paths['/api/v1/auth/register'].post").exists())
+                .andExpect(jsonPath("$.paths['/api/v1/auth/login'].post").exists())
+                .andExpect(jsonPath("$.paths['/api/v1/me'].get").exists())
+                .andExpect(jsonPath("$.paths['/api/v1/me'].put").exists())
+                .andExpect(jsonPath("$.paths['/api/v1/me/password'].post").exists());
     }
 
     // ---- JDBC fixtures (rolled back with the test transaction) ------------------------------------

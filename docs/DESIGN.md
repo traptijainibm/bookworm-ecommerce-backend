@@ -1,6 +1,6 @@
 # BookWorm Backend: Design (Phase 0 baseline)
 
-Status: Phase 0 and Phase 1 implemented and verified (`mvn verify`: 58/58 tests; see section 11). This document is the design that Phases 2-10 follow. All twelve design decisions below are confirmed by the project owner; the authentication choice remains an unapproved deviation from the organisation's security policy (section 7). Phase 2 starts only after the owner reviews Phase 1 and explicitly approves.
+Status: Phases 0 and 1 are done and reviewed (committed). Phase 2 (authentication) is implemented and verified (`mvn verify`: 87 unit + 79 integration tests; see section 12) and awaits owner review. This document is the design that Phases 3-10 follow. All twelve design decisions below are confirmed by the project owner; the authentication choice remains a policy deviation that is **not approved** (section 7). Phase 3 starts only after the owner reviews Phase 2 and explicitly approves.
 
 ## 1. Decisions
 
@@ -401,10 +401,10 @@ Compensating controls: BCrypt hashing, signed short-lived JWTs validated on ever
 Limitations of this design (accepted as designed; not all are mitigated):
 1. **No SAML/OIDC.** This application stores and verifies credentials itself, so it becomes a credential store and an attack target.
 2. **No MFA.** The policy requires MFA for sensitive operations; it is not implemented for checkout or admin actions.
-3. **Tokens cannot be revoked.** After logout, password change, account disable or role change, an already-issued token stays valid until `exp` (default 60 minutes). Mitigation is the short lifetime only. A per-request user-status lookup would close this gap but is not planned.
+3. **Tokens cannot be revoked.** There is no logout or token denylist, and a password change does not invalidate tokens already issued: they stay valid until `exp` (60 minutes). Deleting or disabling a user and changing a role take effect on the next request, because every authenticated request reloads the user from the database (`CurrentUserJwtConverter`) and takes the authority from the current database role. That costs one indexed query per authenticated request.
 4. **Shared HS256 secret.** Anyone holding the secret can mint tokens, including ADMIN tokens. Rotating it invalidates all tokens. Asymmetric signing would be stronger but is not planned.
 5. **No refresh tokens** (decision 12): users log in again when the token expires.
-6. **Lockout is per account** (5 failures, 15 minutes). An attacker can deliberately lock a victim out. There is no per-IP rate limit, no CAPTCHA and no breached-password check.
+6. **Lockout is per account** (5 failures, 15 minutes). An attacker can deliberately lock a victim out (denial of service against a known email). There is no per-IP rate limit, no CAPTCHA and no breached-password check. A locked account answers 423 `ACCOUNT_LOCKED`, which also confirms that the email exists.
 7. **No email verification, password reset or account recovery.** Registration is open to anyone.
 8. **Account enumeration via registration.** Login returns the same error for a wrong email or password, but registering an existing email returns 409, which reveals that the email is registered.
 9. **Client-side token storage is outside this backend's control.** Tokens travel in the `Authorization` header and never in cookies, which is why CSRF protection is disabled.
@@ -417,8 +417,8 @@ Each phase ends with a stop for owner review. The next phase does not start with
 | Phase | Scope | Exit criteria |
 |---|---|---|
 | 0. Foundation (**done**) | Maven project, `.gitignore`, profiles, DB config, Flyway baseline, error handling, OpenAPI config, test setup, `AGENTS.md` | `mvn verify` passes (14/14); app context starts; Swagger/OpenAPI served in test profile; bad requests return `ProblemDetail`. |
-| 1. Catalogue (read only) (**implemented, awaiting owner review**) | Book, Author, Category tables and read-only entities; dev seed data (~30 books); `GET /books` (search, category filter, paging), `GET /books/{id}`, `GET /books/{id}/related`, `GET /categories`; trigram indexes. **No admin write endpoints and no checkout** (see "Phase 1 scope"). | Search, filter, details and related demonstrable in Swagger; tests cover wildcard escaping and related ordering; the OpenAPI document contains only GET operations. |
-| 2. Authentication | User, register, login, JWT validation, BCrypt, lockout, roles, admin bootstrap, `/me`, change password | 401, 403 and lockout tests pass; Swagger Authorize works. |
+| 1. Catalogue (read only) (**done, reviewed**) | Book, Author, Category tables and read-only entities; dev seed data (~30 books); `GET /books` (search, category filter, paging), `GET /books/{id}`, `GET /books/{id}/related`, `GET /categories`; trigram indexes. **No admin write endpoints and no checkout** (see "Phase 1 scope"). | Search, filter, details and related demonstrable in Swagger; tests cover wildcard escaping and related ordering; the OpenAPI document contains only GET operations. |
+| 2. Authentication (**implemented, awaiting owner review**) | User, register, login, JWT validation, BCrypt, lockout, roles, admin bootstrap, `/me`, change password | 401, 403 and lockout tests pass; Swagger Authorize works. |
 | 3. Admin catalogue | Admin book and category CRUD, soft delete, stock update | Customer gets 403; admin changes visible publicly; duplicate ISBN returns 409. |
 | 4. Addresses | Address CRUD, default address | Cross-user access returns 404; only one default. |
 | 5. Cart | Cart and items, totals, stock-aware validation | Totals exact to the paisa; concurrency and ownership tests pass. |
@@ -495,3 +495,60 @@ Known limitations after Phase 1:
 - Search uses `LIKE '%text%'` on `lower(column)`. Trigram indexes serve this for queries of 3 or more characters; shorter queries may scan the table. Not an issue at 31 rows; revisit if the catalogue grows large.
 - The related-books query for authors uses a subquery per request; fine at this scale and covered by tests.
 - `V2` created the `pg_trgm` extension, which required a database role allowed to create extensions (the `postgres` superuser here). A least-privilege deployment role cannot do this and would need the extension created in advance by an administrator.
+
+## 12. Phase 2 implementation summary (authentication)
+
+| Area | Files |
+|---|---|
+| Migration | `db/migration/V3__users.sql`: table `users` (identity PK, unique lowercase email, BCrypt hash, names, optional 10-digit phone, role, enabled, failed attempts, `locked_until`, version, timestamps) with CHECKs on lowercase email, role (`CUSTOMER`/`ADMIN`), phone format and non-negative attempts. Schema only; no rows, no default credentials. |
+| Config | `application.yml` block `bookworm.security.*` (BCrypt strength 12, JWT secret/issuer/ttl, lockout, optional bootstrap admin); `pom.xml` adds `spring-boot-starter-security`, `spring-boot-starter-oauth2-resource-server` and the test-scoped `spring-boot-starter-security-test`; `OpenApiConfig` adds the `bearerAuth` scheme. |
+| Security | `common/security/`: `SecurityConfig` (stateless, deny by default, CSRF off because no cookies), `TokenConfig` (HS256 encoder/decoder, issuer and expiry validation, startup failure for a missing, non-base64 or under 32-byte secret), `CurrentUserJwtConverter` (per-request database check), `PasswordPolicy`, `Emails`, problem-detail entry point and access-denied handler. |
+| Auth | `auth/`: `AuthController`, `AuthService`, `LoginAttemptService` (atomic counter update, `REQUIRES_NEW`), `JwtTokenService`, `AdminBootstrap`, request/response records. |
+| User | `user/`: `User`, `Role`, `UserRepository`, `UserService`, `MeController`, `ProfileResponse`, `UpdateProfileRequest`. |
+| Errors | `ErrorCode` gains `UNAUTHENTICATED`, `INVALID_CREDENTIALS`, `ACCESS_DENIED`, `ACCOUNT_LOCKED` (423); `ApiException` can carry field problems; `GlobalExceptionHandler` handles field errors, `AccessDeniedException` and `AuthenticationException`. |
+| Endpoints | `POST /api/v1/auth/register` (201), `POST /api/v1/auth/login`, `GET` and `PUT /api/v1/me`, `POST /api/v1/me/password`. The catalogue stays public. `/api/v1/admin/**` requires ADMIN but no admin endpoint exists yet (Phase 3). |
+| Tests | Unit: `PasswordPolicyTest`, `EmailsTest`, `TokenConfigTest`, `AuthServiceTest`, `AdminBootstrapTest`, plus updated catalogue/handler tests (87 unit tests in total). Integration against `bookworm_test`: `RegistrationAndLoginIT` (13), `LockoutIT` (9), `ProfileAndPasswordIT` (8), `AdminBootstrapIT` (4), `JwtSecurityIT` (20), `BookwormApplicationIT` (6), `CatalogueIT` (19) = 79. |
+
+Behaviour notes:
+- Register lower-cases the email and always creates a CUSTOMER. Password: at least 12 characters and at most 72 UTF-8 bytes (BCrypt limit).
+- Login answers an identical 401 `INVALID_CREDENTIALS` for an unknown email, a wrong password and a disabled account; an unknown email still runs a BCrypt check against a dummy hash to keep timing similar. The token is HS256 with claims `sub`, `role`, `iss=bookworm`, `iat`, `exp`; lifetime 60 minutes, no clock skew, Bearer header only.
+- **Per-request check.** Every authenticated request validates the signature, issuer and expiry, then loads the user by id. A deleted or disabled user is rejected on the next request even with a valid token, and the authority comes from the current database role, so a promotion or demotion applies on the next request.
+- Lockout: 5 consecutive failures lock the account for 15 minutes (423 `ACCOUNT_LOCKED`). The counter update is atomic and committed in its own transaction so it survives the failed login. A wrong current password on a password change is a 400 field error and counts towards lockout.
+- `/me` endpoints derive the user only from the token; there is no user id in the URL.
+- Admin bootstrap: only when both `BOOKWORM_ADMIN_EMAIL` and `BOOKWORM_ADMIN_PASSWORD` are set. It never promotes an existing account, never changes an existing account's credentials (insert uses `ON CONFLICT (email) DO NOTHING`, after an existence check), is idempotent and logs no credentials.
+- Required environment: `BOOKWORM_JWT_SECRET` (base64 of at least 32 random bytes) in addition to the database variables. Tests generate their own secret and force the bootstrap variables empty.
+- Nimbus is the Spring Security-managed 10.9.1; the newer 10.10 is deliberately not forced without a compatibility and security review.
+
+Limitations after Phase 2 (see also section 7):
+- The authentication design is a **policy deviation that is not approved**. It is not an approved exception.
+- A password change does not revoke tokens already issued (valid up to 60 minutes); there is no logout or denylist. Disable, delete and role change do take effect on the next request.
+- The HS256 secret is shared by issuer and validator; anyone holding it can mint ADMIN tokens, and rotation invalidates every token.
+- Lockout can be abused to lock a known account out; there is no per-IP rate limit. A 423 response confirms that the email exists, as does the 409 on duplicate registration.
+- No MFA, email verification, password reset, refresh tokens or TLS in the application.
+- The per-request user lookup adds one indexed database query to every authenticated request.
+- The application still connects as the `postgres` superuser (local development only).
+- `V3` has been applied to `bookworm_test` by the test run (the table is empty after the tests). It has not yet been applied to `bookworm_db`; the first normal start of the application will apply it through Flyway.
+
+### Phase 2 review findings (tracked, deliberately not fixed in Phase 2)
+
+No critical or high-risk findings. The items below were found in the final read-only review and are open follow-ups. M1 and M2 must be resolved before any shared or non-local deployment.
+
+Medium:
+- **M1. Lockout bypass by in-flight concurrent guesses.** `AuthService.login` and `changePassword` check the lock against a snapshot, then run BCrypt. Requests already past the check can still succeed after the account locks, and `clearLoginFailures` then clears the lock unconditionally. Fix direction: make the success reset conditional on the lock state in SQL, or re-check the lock after BCrypt.
+- **M2. Timing oracle for account enumeration.** A password over 72 UTF-8 bytes skips BCrypt for an existing email but not for an unknown one (dummy hash), so the two are distinguishable by response time. Fix direction: run a dummy match in that branch too.
+- **M3. Registration squatting of the admin email.** Registration is open and unverified, so the bootstrap admin email can be registered first; bootstrap then refuses to promote it and logs only at INFO. Fix direction: log at WARN and document an operator runbook step.
+
+Low:
+- L1. The data-integrity and catch-all handlers log full exceptions; a PostgreSQL CHECK failure detail can include the failing row (email, hash).
+- L2. `UserService.registerCustomer` maps any `DataIntegrityViolationException` to 409 "email exists".
+- L3. Password change does not apply the "must not equal the email" rule.
+- L4. Email is normalised before validation (for example the Kelvin sign U+212A lower-cases to ASCII `k`); the local part allows leading, trailing and consecutive dots.
+- L5. HEAD and OPTIONS on public catalogue endpoints require authentication (fail-closed); revisit with CORS in Phase 10.
+- L6. No explicit `@Size` limit on password fields or request-body size limit.
+- L7. No BCrypt hash upgrade path and no JWT `kid` (single signing key).
+- L8. Security log lines carry no client IP, and every rejected request logs a WARN line.
+- L9. A database failure inside `CurrentUserJwtConverter` surfaces as a 500 rather than a problem+json 401 (still fail-closed).
+- L10. Names accept any characters; escape on output when HTML rendering is added.
+- L11. The bootstrap admin has a generic name and no forced password change; remove `BOOKWORM_ADMIN_PASSWORD` from the environment after first start.
+
+Missing tests to add with the fixes: concurrent duplicate registration; a concurrent burst including the correct password during lockout (M1); known versus unknown email timing for over-long passwords (M2); 72 versus 73 byte and multi-byte password boundaries; JWT with future `nbf` and odd subjects (`+5`, whitespace); disabled user using an existing token for password change and profile update; actuator endpoints other than `health` and `info`, and docs hidden outside dev/test; HEAD and OPTIONS on public endpoints; log-capture test that no password, token, hash or email is logged; new password equal to the email on change; locked account attempting a password change; oversized request bodies.

@@ -10,6 +10,10 @@ import org.springframework.http.HttpStatusCode;
 public enum ErrorCode {
     VALIDATION_FAILED(HttpStatus.BAD_REQUEST, "Validation failed"),
     MALFORMED_REQUEST(HttpStatus.BAD_REQUEST, "Malformed request"),
+    UNAUTHENTICATED(HttpStatus.UNAUTHORIZED, "Authentication required"),
+    INVALID_CREDENTIALS(HttpStatus.UNAUTHORIZED, "Invalid credentials"),
+    ACCESS_DENIED(HttpStatus.FORBIDDEN, "Access denied"),
+    ACCOUNT_LOCKED(HttpStatus.LOCKED, "Account locked"),
     NOT_FOUND(HttpStatus.NOT_FOUND, "Resource not found"),
     METHOD_NOT_ALLOWED(HttpStatus.METHOD_NOT_ALLOWED, "Method not allowed"),
     NOT_ACCEPTABLE(HttpStatus.NOT_ACCEPTABLE, "Not acceptable"),
@@ -40,6 +44,8 @@ public enum ErrorCode {
     public static ErrorCode fromStatus(HttpStatusCode statusCode) {
         return switch (statusCode.value()) {
             case 400 -> MALFORMED_REQUEST;
+            case 401 -> UNAUTHENTICATED;
+            case 403 -> ACCESS_DENIED;
             case 404 -> NOT_FOUND;
             case 405 -> METHOD_NOT_ALLOWED;
             case 406 -> NOT_ACCEPTABLE;

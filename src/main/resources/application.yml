@@ -21,6 +21,22 @@ spring:
   flyway:
     enabled: true
 
+# Secrets come from the environment only and have no defaults: startup fails when the JWT secret is missing,
+# not base64, or shorter than 32 bytes. The bootstrap admin is created only when BOTH admin variables are set.
+bookworm:
+  security:
+    bcrypt-strength: 12
+    jwt:
+      secret: ${BOOKWORM_JWT_SECRET}
+      issuer: bookworm
+      ttl: 60m
+    lockout:
+      max-attempts: 5
+      duration: 15m
+    admin:
+      email: ${BOOKWORM_ADMIN_EMAIL:}
+      password: ${BOOKWORM_ADMIN_PASSWORD:}
+
 server:
   address: 127.0.0.1
   port: 8080

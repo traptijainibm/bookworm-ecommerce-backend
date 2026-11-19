@@ -13,6 +13,8 @@ import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatusCode;
 import org.springframework.http.ProblemDetail;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.AccessDeniedException;
+import org.springframework.security.core.AuthenticationException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
@@ -36,7 +38,30 @@ public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
     public ResponseEntity<Object> handleApiException(ApiException ex, WebRequest request) {
         ErrorCode code = ex.getErrorCode();
         log.warn("Request rejected: code={}", code);
+        if (!ex.getFieldProblems().isEmpty()) {
+            List<FieldViolation> violations = ex.getFieldProblems().stream()
+                    .map(p -> new FieldViolation(p.field(), p.message()))
+                    .toList();
+            ProblemDetail problem = ProblemDetail.forStatusAndDetail(code.status(), ex.getMessage());
+            problem.setTitle(code.title());
+            problem.setProperty("code", code.name());
+            problem.setProperty("errors", violations);
+            return handleExceptionInternal(ex, problem, new HttpHeaders(), code.status(), request);
+        }
         return problem(ex, code, ex.getMessage(), request);
+    }
+
+    /** Without this the catch-all below would turn an authorization failure raised in a controller into a 500. */
+    @ExceptionHandler(AccessDeniedException.class)
+    public ResponseEntity<Object> handleAccessDenied(AccessDeniedException ex, WebRequest request) {
+        log.warn("Access denied");
+        return problem(ex, ErrorCode.ACCESS_DENIED, "You do not have permission to perform this action.", request);
+    }
+
+    @ExceptionHandler(AuthenticationException.class)
+    public ResponseEntity<Object> handleAuthentication(AuthenticationException ex, WebRequest request) {
+        log.warn("Authentication required");
+        return problem(ex, ErrorCode.UNAUTHENTICATED, "Authentication is required to access this resource.", request);
     }
 
     @ExceptionHandler(OptimisticLockingFailureException.class)

@@ -13,20 +13,26 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
+import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.jwt;
+
 import com.bookworm.common.error.GlobalExceptionHandler;
 import com.bookworm.common.web.PageResponse;
 import com.bookworm.common.web.TraceIdFilter;
+import com.bookworm.testsupport.WebSliceSecurity;
+import com.bookworm.user.UserService;
 import java.util.List;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
 import org.springframework.context.annotation.Import;
 import org.springframework.data.domain.Sort;
+import org.springframework.security.oauth2.jwt.JwtDecoder;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 
 @WebMvcTest(CatalogueController.class)
 @Import({GlobalExceptionHandler.class, TraceIdFilter.class})
+@WebSliceSecurity
 class CatalogueControllerTest {
 
     @Autowired
@@ -34,6 +40,13 @@ class CatalogueControllerTest {
 
     @MockitoBean
     private CatalogueService catalogueService;
+
+    // Needed by the real security filter chain loaded through @WebSliceSecurity.
+    @MockitoBean
+    private UserService userService;
+
+    @MockitoBean
+    private JwtDecoder jwtDecoder;
 
     @Test
     void searchUsesDefaultsWhenNoParametersAreGiven() throws Exception {
@@ -130,12 +143,29 @@ class CatalogueControllerTest {
 
     @Test
     void catalogueEndpointsRejectEveryWriteMethod() throws Exception {
+        // Authenticated (the security layer is bypassed with a ready-made token) so the 405 comes from MVC.
         for (String path : List.of("/api/v1/books", "/api/v1/books/1", "/api/v1/books/1/related", "/api/v1/categories")) {
-            mockMvc.perform(post(path)).andExpect(status().isMethodNotAllowed());
-            mockMvc.perform(put(path)).andExpect(status().isMethodNotAllowed());
-            mockMvc.perform(patch(path)).andExpect(status().isMethodNotAllowed());
-            mockMvc.perform(delete(path)).andExpect(status().isMethodNotAllowed());
+            mockMvc.perform(post(path).with(jwt())).andExpect(status().isMethodNotAllowed());
+            mockMvc.perform(put(path).with(jwt())).andExpect(status().isMethodNotAllowed());
+            mockMvc.perform(patch(path).with(jwt())).andExpect(status().isMethodNotAllowed());
+            mockMvc.perform(delete(path).with(jwt())).andExpect(status().isMethodNotAllowed());
         }
         verifyNoInteractions(catalogueService);
+    }
+
+    @Test
+    void anonymousWritesToCatalogueAreRejectedAsUnauthenticated() throws Exception {
+        for (String path : List.of("/api/v1/books", "/api/v1/books/1", "/api/v1/categories")) {
+            mockMvc.perform(post(path)).andExpect(status().isUnauthorized());
+            mockMvc.perform(delete(path)).andExpect(status().isUnauthorized());
+        }
+        verifyNoInteractions(catalogueService);
+    }
+
+    @Test
+    void catalogueReadsStayPublicWithoutAToken() throws Exception {
+        when(catalogueService.getCategories()).thenReturn(List.of());
+
+        mockMvc.perform(get("/api/v1/categories")).andExpect(status().isOk());
     }
 }

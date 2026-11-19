@@ -10,6 +10,8 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import com.bookworm.common.web.TraceIdFilter;
+import com.bookworm.testsupport.WebSliceSecurity;
+import com.bookworm.user.UserService;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotBlank;
@@ -20,6 +22,10 @@ import org.springframework.context.annotation.Import;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.dao.OptimisticLockingFailureException;
 import org.springframework.http.MediaType;
+import org.springframework.security.access.AccessDeniedException;
+import org.springframework.security.oauth2.jwt.JwtDecoder;
+import org.springframework.security.test.context.support.WithMockUser;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -29,10 +35,36 @@ import org.springframework.web.bind.annotation.RestController;
 
 @WebMvcTest(controllers = GlobalExceptionHandlerTest.ProbeController.class)
 @Import({GlobalExceptionHandler.class, TraceIdFilter.class, GlobalExceptionHandlerTest.ProbeController.class})
+@WebSliceSecurity
+@WithMockUser
 class GlobalExceptionHandlerTest {
 
     @Autowired
     private MockMvc mockMvc;
+
+    // Needed by the real security filter chain loaded through @WebSliceSecurity.
+    @MockitoBean
+    private UserService userService;
+
+    @MockitoBean
+    private JwtDecoder jwtDecoder;
+
+    @Test
+    void accessDeniedRaisedInAControllerIsForbiddenNotAServerError() throws Exception {
+        mockMvc.perform(get("/probe/denied"))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.code").value("ACCESS_DENIED"))
+                .andExpect(jsonPath("$.traceId").isNotEmpty());
+    }
+
+    @Test
+    void apiExceptionWithFieldProblemsReturnsThemAsValidationErrors() throws Exception {
+        mockMvc.perform(get("/probe/fields"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("VALIDATION_FAILED"))
+                .andExpect(jsonPath("$.errors[0].field").value("password"))
+                .andExpect(jsonPath("$.errors[0].message").value("must be at least 12 characters"));
+    }
 
     @Test
     void invalidBodyReturnsFieldLevelValidationProblem() throws Exception {
@@ -126,6 +158,17 @@ class GlobalExceptionHandlerTest {
         @GetMapping("/probe/api")
         String api() {
             throw new ApiException(ErrorCode.NOT_FOUND, "Book 42 does not exist");
+        }
+
+        @GetMapping("/probe/denied")
+        String denied() {
+            throw new AccessDeniedException("Access is denied");
+        }
+
+        @GetMapping("/probe/fields")
+        String fields() {
+            throw new ApiException(ErrorCode.VALIDATION_FAILED, "Request validation failed.",
+                    java.util.List.of(new ApiException.FieldProblem("password", "must be at least 12 characters")));
         }
 
         @GetMapping("/probe/lock")
