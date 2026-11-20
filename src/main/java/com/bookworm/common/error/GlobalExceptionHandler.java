@@ -9,6 +9,7 @@ import org.slf4j.LoggerFactory;
 import org.slf4j.MDC;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.dao.OptimisticLockingFailureException;
+import org.springframework.dao.PessimisticLockingFailureException;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatusCode;
 import org.springframework.http.ProblemDetail;
@@ -69,6 +70,18 @@ public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
         log.warn("Concurrent modification detected", ex);
         return problem(ex, ErrorCode.CONCURRENT_UPDATE,
                 "The resource was modified by another request. Please retry.", request);
+    }
+
+    /**
+     * Phase 4: a lock that could not be acquired, a deadlock loser or a serialisation failure (the subtypes of
+     * {@link PessimisticLockingFailureException}). Deliberately narrow: no other {@code DataAccessException},
+     * query timeout or integrity violation is mapped here. The detail is logged server-side only.
+     */
+    @ExceptionHandler(PessimisticLockingFailureException.class)
+    public ResponseEntity<Object> handlePessimisticLock(PessimisticLockingFailureException ex, WebRequest request) {
+        log.warn("Lock conflict detected", ex);
+        return problem(ex, ErrorCode.CONCURRENT_UPDATE,
+                "The resource is being modified by another request. Please retry.", request);
     }
 
     @ExceptionHandler(DataIntegrityViolationException.class)

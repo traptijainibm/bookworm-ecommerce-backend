@@ -40,6 +40,9 @@ public class User {
 
     private boolean enabled = true;
 
+    @Column(nullable = false)
+    private long pointsBalance = 0L;
+
     @Column(insertable = false, updatable = false)
     private int failedLoginAttempts;
 
@@ -117,6 +120,10 @@ public class User {
 
     public Role getRole() {
         return role;
+    }
+
+    public long getPointsBalance() {
+        return pointsBalance;
     }
 
     public boolean isEnabled() {

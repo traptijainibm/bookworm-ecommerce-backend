@@ -239,7 +239,8 @@ class CatalogueIT {
     @Test
     void publicCatalogueEndpointsAreGetOnlyAndNoDeleteExistsAnywhere() throws Exception {
         // The PUBLIC catalogue is read-only. Phase 3 adds the admin catalogue writes (POST/PUT/PATCH) under
-        // /api/v1/admin, but no operation anywhere is a DELETE and there is no stock endpoint.
+        // /api/v1/admin, with no DELETE and no stock endpoint. Phase 4 adds exactly two DELETE operations, both on
+        // the caller's own cart (/api/v1/me/cart/items and /api/v1/me/cart/items/{bookId}); there is no other one.
         for (String path : java.util.List.of("/api/v1/books", "/api/v1/books/{id}", "/api/v1/books/{id}/related",
                 "/api/v1/categories")) {
             mockMvc.perform(get("/v3/api-docs"))
@@ -252,8 +253,12 @@ class CatalogueIT {
         }
         mockMvc.perform(get("/v3/api-docs"))
                 .andExpect(jsonPath("$.paths['/api/v1/admin/probe']").doesNotExist())
-                .andExpect(jsonPath("$.paths", org.hamcrest.Matchers.aMapWithSize(15)))
-                .andExpect(jsonPath("$.paths.*.delete").isEmpty())
+                // 15 before Phase 4, plus 3 cart paths (M4), 5 wishlist / move paths (M5), and 2 order paths (M7).
+                .andExpect(jsonPath("$.paths", org.hamcrest.Matchers.aMapWithSize(25)))
+                .andExpect(jsonPath("$.paths.*.delete", org.hamcrest.Matchers.hasSize(3)))
+                .andExpect(jsonPath("$.paths['/api/v1/me/cart/items'].delete").exists())
+                .andExpect(jsonPath("$.paths['/api/v1/me/cart/items/{bookId}'].delete").exists())
+                .andExpect(jsonPath("$.paths['/api/v1/me/wishlist/items/{bookId}'].delete").exists())
                 .andExpect(jsonPath("$.paths['/api/v1/auth/register'].post").exists())
                 .andExpect(jsonPath("$.paths['/api/v1/auth/login'].post").exists())
                 .andExpect(jsonPath("$.paths['/api/v1/me'].get").exists())

@@ -21,6 +21,19 @@ public enum ErrorCode {
     DUPLICATE_RESOURCE(HttpStatus.CONFLICT, "Duplicate resource"),
     DATA_INTEGRITY_VIOLATION(HttpStatus.CONFLICT, "Request conflicts with existing data"),
     CONCURRENT_UPDATE(HttpStatus.CONFLICT, "Concurrent modification"),
+    // Phase 4 (cart and wishlist).
+    INSUFFICIENT_STOCK(HttpStatus.CONFLICT, "Insufficient stock"),
+    BOOK_UNAVAILABLE(HttpStatus.CONFLICT, "Book unavailable"),
+    QUANTITY_LIMIT_EXCEEDED(HttpStatus.UNPROCESSABLE_CONTENT, "Quantity limit exceeded"),
+    CART_FULL(HttpStatus.UNPROCESSABLE_CONTENT, "Cart full"),
+    WISHLIST_FULL(HttpStatus.UNPROCESSABLE_CONTENT, "Wishlist full"),
+    // Checkout & Order codes
+    PAYMENT_DECLINED(HttpStatus.PAYMENT_REQUIRED, "Payment declined"),
+    PAYMENT_UNAVAILABLE(HttpStatus.BAD_GATEWAY, "Payment gateway unavailable"),
+    IDEMPOTENCY_KEY_REUSED(HttpStatus.UNPROCESSABLE_CONTENT, "Idempotency key reused with different payload"),
+    CART_EMPTY(HttpStatus.UNPROCESSABLE_CONTENT, "Cart empty"),
+    POINTS_LIMIT_EXCEEDED(HttpStatus.UNPROCESSABLE_CONTENT, "Points limit exceeded"),
+    INVALID_STATUS_TRANSITION(HttpStatus.CONFLICT, "Invalid status transition"),
     REQUEST_FAILED(HttpStatus.BAD_REQUEST, "Request failed"),
     INTERNAL_ERROR(HttpStatus.INTERNAL_SERVER_ERROR, "Internal server error");
 
@@ -45,11 +58,13 @@ public enum ErrorCode {
         return switch (statusCode.value()) {
             case 400 -> MALFORMED_REQUEST;
             case 401 -> UNAUTHENTICATED;
+            case 402 -> PAYMENT_DECLINED;
             case 403 -> ACCESS_DENIED;
             case 404 -> NOT_FOUND;
             case 405 -> METHOD_NOT_ALLOWED;
             case 406 -> NOT_ACCEPTABLE;
             case 415 -> UNSUPPORTED_MEDIA_TYPE;
+            case 502 -> PAYMENT_UNAVAILABLE;
             default -> statusCode.is5xxServerError() ? INTERNAL_ERROR : REQUEST_FAILED;
         };
     }

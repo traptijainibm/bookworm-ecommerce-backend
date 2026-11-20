@@ -59,6 +59,10 @@ public class SecurityConfig {
                                 "/swagger-ui/**").permitAll();
                     }
                     a.requestMatchers("/api/v1/admin/**").hasRole("ADMIN");
+                    // Phase 4: the cart and wishlist belong to customers; an ADMIN gets 403. The rest of /me/** stays
+                    // open to any authenticated user.
+                    a.requestMatchers("/api/v1/me/cart/**", "/api/v1/me/wishlist/**", "/api/v1/me/orders/**", "/api/v1/me/points")
+                            .hasRole("CUSTOMER");
                     a.anyRequest().authenticated();
                 });
         return http.build();
