@@ -1,6 +1,6 @@
 # BookWorm Backend: Design (Phase 0 baseline)
 
-Status: Phases 0 and 1 are done and reviewed (committed). Phase 2 (authentication) is implemented and verified (`mvn verify`: 87 unit + 79 integration tests; see section 12) and awaits owner review. This document is the design that Phases 3-10 follow. All twelve design decisions below are confirmed by the project owner; the authentication choice remains a policy deviation that is **not approved** (section 7). Phase 3 starts only after the owner reviews Phase 2 and explicitly approves.
+Status: Phases 0, 1 and 2 are done, reviewed and committed. Phase 3 (admin catalogue management) is being implemented under the owner-approved scope in "Phase 3 scope" (section 8) and stops for owner review before any commit. This document is the design that Phases 4-10 follow. All twelve design decisions below are confirmed by the project owner; the authentication choice remains a policy deviation that is **not approved** (section 7).
 
 ## 1. Decisions
 
@@ -289,16 +289,19 @@ Base path `/api/v1`. JSON only. `/me/**` takes the user from the validated token
 | GET | `/books/{id}/related?limit=8` | Same author first, then same category, excluding the book |
 | GET | `/categories` | List categories |
 
-**Admin catalogue (ADMIN)**
+**Admin catalogue (ADMIN), Phase 3 (owner-approved; supersedes the earlier draft that listed DELETE and a stock endpoint)**
 
 | Method | Path | Purpose |
 |---|---|---|
-| POST | `/admin/books` | Create |
-| PUT | `/admin/books/{id}` | Update |
-| DELETE | `/admin/books/{id}` | Soft delete |
-| PATCH | `/admin/books/{id}/stock` | Set stock `{quantity}` |
-| GET | `/admin/books?includeInactive=true` | List including inactive |
-| POST, PUT, DELETE | `/admin/categories`, `/admin/categories/{id}` | Manage categories; delete blocked if books use it |
+| POST | `/admin/books` | Create. The book is created **inactive** with stock 0 |
+| GET | `/admin/books?q=&categoryId=&active=&page=&size=&sort=` | List all books, active and inactive |
+| GET | `/admin/books/{id}` | Details, active or not (includes read-only `stockQuantity`) |
+| PUT | `/admin/books/{id}` | Full update of editable fields; requires `version` (optimistic locking) |
+| PATCH | `/admin/books/{id}/active` | `{active: true|false}`; the only way to activate or deactivate |
+| POST, GET, GET, PUT | `/admin/categories`, `/admin/categories/{id}` | Create, list (unpaged), get, update. Slug is generated, never supplied |
+| POST, GET, GET, PUT | `/admin/authors`, `/admin/authors/{id}` | Create, list (paged, `q`), get, update |
+
+There is **no DELETE endpoint and no stock endpoint** in Phase 3. Stock changes arrive with the later inventory and checkout phases.
 
 **Cart (authenticated)**
 
@@ -350,7 +353,8 @@ OpenAPI: `/v3/api-docs` and `/swagger-ui.html` are on in `dev` and `test`, off b
 | Address | Required fields; PIN 6 digits; phone 10 digits; max 10 per user. |
 | Search | `q` <= 100 characters; `%` and `_` escaped; parameterized queries. |
 | Paging | `size` 1-100; `sort` from an allowlist. |
-| Admin book | ISBN-13/10 with checksum; price > 0; stock >= 0; title required; category must exist; max 10 authors. |
+| Admin book | ISBN-10 or ISBN-13 with checksum, stored as canonical ISBN-13; price > 0; title required; category must exist; 1-10 distinct authors that exist; `stockQuantity`, `active`, `id` are never accepted from the client. |
+| Admin category / author | Name trimmed, NFC-normalised, whitespace collapsed, allowlisted characters, no format/control/compatibility characters; case-insensitive unique. |
 | Cart | Quantity 1-10 per line; book active; quantity <= stock. |
 | Checkout | Cart not empty; address owned by caller; stock re-checked; prices re-read; `redeemPoints` >= 0, <= balance and within the 20% cap; `Idempotency-Key` required. |
 | Order status | Transition must be allowed by the table above. |
@@ -419,7 +423,7 @@ Each phase ends with a stop for owner review. The next phase does not start with
 | 0. Foundation (**done**) | Maven project, `.gitignore`, profiles, DB config, Flyway baseline, error handling, OpenAPI config, test setup, `AGENTS.md` | `mvn verify` passes (14/14); app context starts; Swagger/OpenAPI served in test profile; bad requests return `ProblemDetail`. |
 | 1. Catalogue (read only) (**done, reviewed**) | Book, Author, Category tables and read-only entities; dev seed data (~30 books); `GET /books` (search, category filter, paging), `GET /books/{id}`, `GET /books/{id}/related`, `GET /categories`; trigram indexes. **No admin write endpoints and no checkout** (see "Phase 1 scope"). | Search, filter, details and related demonstrable in Swagger; tests cover wildcard escaping and related ordering; the OpenAPI document contains only GET operations. |
 | 2. Authentication (**implemented, awaiting owner review**) | User, register, login, JWT validation, BCrypt, lockout, roles, admin bootstrap, `/me`, change password | 401, 403 and lockout tests pass; Swagger Authorize works. |
-| 3. Admin catalogue | Admin book and category CRUD, soft delete, stock update | Customer gets 403; admin changes visible publicly; duplicate ISBN returns 409. |
+| 3. Admin catalogue (**implemented, awaiting owner review**) | Admin book, category and author create/read/update, activate/deactivate (soft delete only), V4 constraints. No DELETE, no stock endpoint (see "Phase 3 scope") | Customer gets 403; admin changes visible publicly; duplicate ISBN returns 409; stock never changes. |
 | 4. Addresses | Address CRUD, default address | Cross-user access returns 404; only one default. |
 | 5. Cart | Cart and items, totals, stock-aware validation | Totals exact to the paisa; concurrency and ownership tests pass. |
 | 6. Wishlist | Idempotent add/remove, move-to-cart | Wishlist and cart integration work. |
@@ -452,6 +456,40 @@ Each phase ends with a stop for owner review. The next phase does not start with
 - `application-dev.yml` must set `spring.flyway.locations` to both `classpath:db/migration` and `classpath:db/seed`; setting only the seed location would skip the schema migrations.
 
 **Exit criteria**: the endpoints above work in Swagger against seeded data; wildcard characters in `q` match literally; related-book ordering is covered by a test; `mvn verify` passes; the OpenAPI document contains no non-GET operation.
+
+### Phase 3 scope (admin catalogue management)
+
+Approved by the owner after a read-only inspection of `bookworm_db` (no duplicate names, 31 canonical ISBN-13 values, no data cleanup needed).
+
+**Decisions**
+- **D1** `PATCH /api/v1/admin/books/{id}/active` with `{"active": true|false}` (required boolean). Idempotent.
+- **D2** A new book is created **inactive**; only the PATCH activates it.
+- **D3** `stockQuantity` appears in admin responses as read-only. New books have stock 0. There is no stock endpoint and no request DTO has a stock field.
+- **D4** The category slug is generated from the name on create (NFKD, accents stripped, lower-case, non `a-z0-9` runs become `-`). There is no slug override. A collision gets the lowest free numeric suffix (`base-2`, `base-3`, ...). The slug never changes when the name changes.
+- **D5** Case-insensitive unique indexes on `lower(name)` for authors and categories (V4).
+- **D6** Unknown JSON fields on admin request DTOs return 400 `MALFORMED_REQUEST`. Boot's Jackson 3 mapper disables `FAIL_ON_UNKNOWN_PROPERTIES`, and `@JsonIgnoreProperties(ignoreUnknown = false)` does not override that for records, so admin DTOs implement the `StrictRequest` marker and a `DeserializationProblemHandler` rejects unknown properties for marked types only. Phase 2 DTOs keep ignoring unknown fields.
+- **D7** A book has 1 to 10 distinct, existing authors.
+- **D8** ISBN-10 and ISBN-13 are accepted (spaces and hyphens stripped, `x` upper-cased, checksum verified); ISBN-10 is converted to ISBN-13 for storage, and the unique constraint therefore covers the canonical value. Responses always show the 13-digit form. The checksum is checked in Java only, not in SQL.
+- **D9** No DELETE endpoints (books, categories, authors) and no stock endpoint. Deactivating a book is the only "removal"; the row, its id and its ISBN stay.
+- **D10** `PUT /admin/books/{id}` requires `version`. A stale version returns 409 `CONCURRENT_UPDATE`. Categories and authors have no version column and are last-writer-wins (the unique indexes protect integrity).
+- **D11** Category and author responses include `bookCount` (all books, active or inactive) from one grouped query.
+- **D12** The category list is unpaged.
+
+**Design rules**
+- **Separate writable entities.** `AdminBook`, `AdminAuthor` and `AdminCategory` map the existing tables. The public entities, repositories, services, controller and response DTOs are not changed, so a public GET can never write. `AdminBook.stockQuantity` is `insertable = false, updatable = false` with no setter, so the database default (0) applies on insert and no admin write can change stock.
+- **Duplicates** are checked first for a friendly 409 `DUPLICATE_RESOURCE`, then raced duplicates are mapped by **constraint name** (`uk_books_isbn`, `ux_authors_name_ci`, `ux_categories_name_ci`, `uk_categories_slug`). Any other integrity failure still reaches the generic handler.
+- **Slug retries** run each attempt in a genuinely separate transaction (`REQUIRES_NEW` on a different bean), because a PostgreSQL unique violation aborts the current transaction.
+- **Names** are trimmed, NFC-normalised and whitespace-collapsed; control, format (zero-width, bidi), private-use, unassigned and surrogate code points and compatibility characters (NFKC differs from NFC) are rejected; only letters, marks, digits, spaces and `. , ' ’ - ( ) & / : + !` are allowed; length counts code points (category 100, author 200).
+- **Cover URLs** must be `https`, at most 500 characters, without user information. They are stored, never fetched.
+- Every admin write logs one audit line with the action, entity id and admin id; titles, descriptions and request text are never logged.
+
+**Schema change (V4, the only one in Phase 3)**: `V4__catalogue_admin_constraints.sql` adds `ux_authors_name_ci`, `ux_categories_name_ci` and replaces `ck_books_isbn_format` with `^97[89][0-9]{10}$`. It inserts, updates and deletes no data.
+
+**Limitations (accepted)**
+- Mixed-script homoglyphs (for example Cyrillic `а` and Latin `a`) are not blocked, and two different real authors with the same name cannot both be stored.
+- Category and author updates are last-writer-wins.
+- The Phase 2 findings M1-M3 and L1-L11 below are unchanged and still open.
+
 
 ## 9. Testing strategy
 

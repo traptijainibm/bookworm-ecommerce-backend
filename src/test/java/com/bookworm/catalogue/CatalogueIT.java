@@ -237,9 +237,9 @@ class CatalogueIT {
     // ---- API surface -----------------------------------------------------------------------------
 
     @Test
-    void catalogueEndpointsInTheOpenApiDocumentAreGetOnlyAndNoAdminApiExistsYet() throws Exception {
-        // Phase 2 adds the auth and /me endpoints (POST/PUT), so the invariant is now: the CATALOGUE is read-only
-        // and no admin (write) API has been published yet (that is Phase 3).
+    void publicCatalogueEndpointsAreGetOnlyAndNoDeleteExistsAnywhere() throws Exception {
+        // The PUBLIC catalogue is read-only. Phase 3 adds the admin catalogue writes (POST/PUT/PATCH) under
+        // /api/v1/admin, but no operation anywhere is a DELETE and there is no stock endpoint.
         for (String path : java.util.List.of("/api/v1/books", "/api/v1/books/{id}", "/api/v1/books/{id}/related",
                 "/api/v1/categories")) {
             mockMvc.perform(get("/v3/api-docs"))
@@ -252,7 +252,8 @@ class CatalogueIT {
         }
         mockMvc.perform(get("/v3/api-docs"))
                 .andExpect(jsonPath("$.paths['/api/v1/admin/probe']").doesNotExist())
-                .andExpect(jsonPath("$.paths", org.hamcrest.Matchers.aMapWithSize(8)))
+                .andExpect(jsonPath("$.paths", org.hamcrest.Matchers.aMapWithSize(15)))
+                .andExpect(jsonPath("$.paths.*.delete").isEmpty())
                 .andExpect(jsonPath("$.paths['/api/v1/auth/register'].post").exists())
                 .andExpect(jsonPath("$.paths['/api/v1/auth/login'].post").exists())
                 .andExpect(jsonPath("$.paths['/api/v1/me'].get").exists())
